@@ -94,7 +94,7 @@ class CarbonClientProtocol(Int32StringReceiver):
       return
     if not self.factory.hasQueuedDatapoints():
       return
-    
+
     if settings.USE_RATIO_RESET is True:
       if not self.connectionQualityMonitor():
         self.resetConnectionForQualityReasons("Sent: {0}, Received: {1}".format(
@@ -193,6 +193,7 @@ class CarbonClientFactory(ReconnectingClientFactory):
     self.queueHasSpace.addCallback(self.queueSpaceCallback)
 
   def buildProtocol(self, addr):
+    self.resetDelay()
     self.connectedProtocol = CarbonClientProtocol()
     self.connectedProtocol.factory = self
     return self.connectedProtocol
