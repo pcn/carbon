@@ -8,6 +8,8 @@ from carbon.util import pickle
 from carbon import log, state, instrumentation
 from collections import deque
 from time import time
+from multiprocessing import Pool
+import os
 
 
 SEND_QUEUE_LOW_WATERMARK = settings.MAX_QUEUE_SIZE * settings.QUEUE_LOW_WATERMARK_PCT
@@ -26,6 +28,14 @@ class CarbonClientProtocol(Int32StringReceiver):
     self.sent = 'destinations.%s.sent' % self.destinationName
     self.relayMaxQueueLength = 'destinations.%s.relayMaxQueueLength' % self.destinationName
     self.batchesSent = 'destinations.%s.batchesSent' % self.destinationName
+    self.pool_size = 10 # XXX make this a config option
+    self.pool = Pool(self.pool_size, maxtasksperchild=1)
+    self.queue_dir = '/var/tmp/carbon-relay-queue' # XXX make this a config option
+    self.send_program = '/mnt/graphite/bin/repr_pickle_sender.py'
+    # XXX fix this so the target is identifiable in the filename.
+    self.queue_file_prefix = "{0}/carbon.{1}.{2}".format(self.queue_dir, self.transport.addr[0], self.transport.addr[1])
+    self.queue_file = None
+    self.open_queue_file()
 
     self.slowConnectionReset = 'destinations.%s.slowConnectionReset' % self.destinationName
 
@@ -33,7 +43,47 @@ class CarbonClientProtocol(Int32StringReceiver):
     self.factory.connectionMade = Deferred()
     self.sendQueued()
 
+  @property
+  def next_flush_time(self):
+    """Get the next time, and set it if it's currently None"""
+    self.sec_between_flushes = 10 # seconds # XXX make this a config option
+
+    try:
+        if self._next_flush_time:
+            pass
+    except AttributeError:
+        self._next_flush_time = time() + self.sec_between_flushes
+    return self._next_flush_time
+
+  @next_flush_time.setter
+  def next_flush_time(self, next_time):
+    """This is here in case someone wants to run self.next_flush_time
+    = some_number.  I don't want to leave some poor programmer
+    overwriting the next_flush_time() method with "1" or something.
+    """
+    self.set_next_flush_time(next_time)
+
+  def set_next_flush_time(self, next_time=None):
+    """If a manual time is desired, set it - this is not an increment
+    over time.time() (aka "now"), this is the actual time at which the flush should
+    happen as seconds since the epoch.
+    """
+    if next_time is None:
+      self._next_flush_time = time() + self.sec_between_flushes
+    else:
+      self._next_flush_time = next_time
+
+  def open_queue_file(self):
+    if self.queue_file:
+      self.queue_file.close()
+    self.queue_file_name = "{0}.{1}".format(self.queue_file_prefix, self.next_flush_time)
+    self.queue_file = open(self.queue_file_name, 'w')
+
   def connectionLost(self, reason):
+    """Monitor the state of the connection - we can use this as an
+    indication as to whether to bother launching child connections?
+    Maybe?  Maybe just get rid of this.
+    """
     log.clients("%s::connectionLost %s" % (self, reason.getErrorMessage()))
     self.connected = False
 
@@ -58,7 +108,17 @@ class CarbonClientProtocol(Int32StringReceiver):
     reactor.callLater(settings.TIME_TO_DEFER_SENDING, self.sendQueued)
 
   def _sendDatapoints(self, datapoints):
-      self.sendString(pickle.dumps(datapoints, protocol=-1))
+      """Once some number of datapoints have been accumulated, write
+      them to a file, and that file will be delivered to the remote
+      end.
+
+      The format of the file is repr, so we'll eval the file, line by line
+      and send the file.  Should be cheaper and easier than using multiple
+      pickles.
+      """
+      # self.sendString(pickle.dumps(datapoints, protocol=-1))
+      self.queue_file.write(repr(datapoints) + "\n")
+      # XXX Change "sent" to "written"?
       instrumentation.increment(self.sent, len(datapoints))
       instrumentation.increment(self.batchesSent)
       self.factory.checkQueue()
@@ -95,60 +155,31 @@ class CarbonClientProtocol(Int32StringReceiver):
     if not self.factory.hasQueuedDatapoints():
       return
 
-    if settings.USE_RATIO_RESET is True:
-      if not self.connectionQualityMonitor():
-        self.resetConnectionForQualityReasons("Sent: {0}, Received: {1}".format(
-          instrumentation.prior_stats.get(self.sent, 0),
-          instrumentation.prior_stats.get('metricsReceived', 0)))
+    # if settings.USE_RATIO_RESET is True:
+    #   if not self.connectionQualityMonitor():
+    #     self.resetConnectionForQualityReasons("Sent: {0}, Received: {1}".format(
+    #       instrumentation.prior_stats.get(self.sent, 0),
+    #       instrumentation.prior_stats.get('metricsReceived', 0)))
 
     self._sendDatapoints(self.factory.takeSomeFromQueue())
+    if time() >= self.next_flush_time:
+        self.launch_flush_sender()
+        self.set_next_flush_time()
+        self.open_queue_file()
     if (self.factory.queueFull.called and
         queueSize < SEND_QUEUE_LOW_WATERMARK):
       self.factory.queueHasSpace.callback(queueSize)
     if self.factory.hasQueuedDatapoints():
       reactor.callLater(chained_invocation_delay, self.sendQueued)
 
-
-  def connectionQualityMonitor(self):
-    """Checks to see if the connection for this factory appears to
-    be delivering stats at a speed close to what we're receiving
-    them at.
-
-    This is open to other measures of connection quality.
-
-    Returns a Bool
-
-    True means that quality is good, OR
-    True means that the total received is less than settings.MIN_RESET_STAT_FLOW
-
-    False means that quality is bad
-
-    """
-    destination_sent = float(instrumentation.prior_stats.get(self.sent, 0))
-    total_received = float(instrumentation.prior_stats.get('metricsReceived', 0))
-    instrumentation.increment(self.slowConnectionReset, 0)
-    if total_received < settings.MIN_RESET_STAT_FLOW:
-      return True
-
-    if (destination_sent / total_received) < settings.MIN_RESET_RATIO:
-      return False
-    else:
-      return True
-
-  def resetConnectionForQualityReasons(self, reason):
-    """Only re-sets the connection if it's been
-    settings.MIN_RESET_INTERVAL seconds since the last re-set.
-
-    Reason should be a string containing the quality info that led to
-    a re-set.
-    """
-    if (time() - self.lastResetTime) < float(settings.MIN_RESET_INTERVAL):
-      return
-    else:
-      self.factory.connectedProtocol.disconnect()
-      self.lastResetTime = time()
-      instrumentation.increment(self.slowConnectionReset)
-      log.clients("%s:: resetConnectionForQualityReasons: %s" % (self, reason))
+  def launch_flush_sender(self):
+      server = self.transport.addr[0]
+      port = self.transport.addr[1]
+      # worker = self.pool.apply_async(launch_sender,
+      #     [self.send_program, server, port, self.queue_file_name],
+      #     callback=log_flush_sender_result)
+      # worker.ready()
+      launch_sender(self.send_program, server, port, self.queue_file_name)
 
   def __str__(self):
     return 'CarbonClientProtocol(%s:%d:%s)' % (self.factory.destination)
@@ -376,3 +407,17 @@ class CarbonClientManager(Service):
 
   def __str__(self):
     return "<%s[%x]>" % (self.__class__.__name__, id(self))
+
+def launch_sender(program, server, port, filename):
+    arglist = [program, server, port, filename]
+    pid = os.fork()
+    if pid == 0: # child
+        print("I'm going to launch: {0} {1} {2} {3}".format(*arglist))
+        os.execvp(arglist[0], arglist)
+    else: # parent
+        print "Waiting for child {0}".format(pid)
+        rv = os.waitpid(pid)
+        print "Child {0} returned {1}".format(pid, rv)
+
+def log_flush_sender_result(result):
+    print "Got result: {0}".format(result)
