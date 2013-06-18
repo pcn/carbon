@@ -8,7 +8,6 @@ from carbon.util import pickle
 from carbon import log, state, instrumentation
 from collections import deque
 from time import time
-from multiprocessing import Pool
 import os
 
 
@@ -28,14 +27,12 @@ class CarbonClientProtocol(Int32StringReceiver):
     self.sent = 'destinations.%s.sent' % self.destinationName
     self.relayMaxQueueLength = 'destinations.%s.relayMaxQueueLength' % self.destinationName
     self.batchesSent = 'destinations.%s.batchesSent' % self.destinationName
-    self.pool_size = 10 # XXX make this a config option
-    self.pool = Pool(self.pool_size, maxtasksperchild=1)
-    self.queue_dir = '/var/tmp/carbon-relay-queue' # XXX make this a config option
+    self.queue_dir = '/var/tmp/carbon' # XXX make this a config option
+    self.send_queue_dir = '/var/tmp/carbon/send' # XXX make this a config option
     self.send_program = '/mnt/graphite/bin/repr_pickle_sender.py'
-    # XXX fix this so the target is identifiable in the filename.
-    self.queue_file_prefix = "{0}/carbon.{1}.{2}".format(self.queue_dir, self.transport.addr[0], self.transport.addr[1])
+    self.queue_file_prefix = "{0}/relay.{1}.{2}/".format(self.queue_dir, self.transport.addr[0], self.transport.addr[1])
     self.queue_file = None
-    self.open_queue_file()
+    self.open_next_queue_file()
 
     self.slowConnectionReset = 'destinations.%s.slowConnectionReset' % self.destinationName
 
@@ -73,11 +70,19 @@ class CarbonClientProtocol(Int32StringReceiver):
     else:
       self._next_flush_time = next_time
 
-  def open_queue_file(self):
-    if self.queue_file:
-      self.queue_file.close()
-    self.queue_file_name = "{0}.{1}".format(self.queue_file_prefix, self.next_flush_time)
-    self.queue_file = open(self.queue_file_name, 'w')
+  def open_next_queue_file(self):
+      """As long as we're running, the only operation that should be
+      run on the queue file is to open one.  Doing so will close the
+      old one and do whatever is necessary for it.
+      """
+      if self.queue_file:
+          fname = os.path.basename(self.queue_file_name)
+          new_name = "{0}/{1}".format(self.send_queue_dir, basename)
+          os.rename(self.queue_file, self.)
+          self.queue_file.close() # Tidy up
+
+      self.queue_file_name = "{0}.{1}".format(self.queue_file_prefix, self.next_flush_time)
+      self.queue_file = open(self.queue_file_name, 'w')
 
   def connectionLost(self, reason):
     """Monitor the state of the connection - we can use this as an
@@ -163,23 +168,13 @@ class CarbonClientProtocol(Int32StringReceiver):
 
     self._sendDatapoints(self.factory.takeSomeFromQueue())
     if time() >= self.next_flush_time:
-        self.launch_flush_sender()
         self.set_next_flush_time()
-        self.open_queue_file()
+        self.open_next_queue_file()
     if (self.factory.queueFull.called and
         queueSize < SEND_QUEUE_LOW_WATERMARK):
       self.factory.queueHasSpace.callback(queueSize)
     if self.factory.hasQueuedDatapoints():
       reactor.callLater(chained_invocation_delay, self.sendQueued)
-
-  def launch_flush_sender(self):
-      server = self.transport.addr[0]
-      port = self.transport.addr[1]
-      # worker = self.pool.apply_async(launch_sender,
-      #     [self.send_program, server, port, self.queue_file_name],
-      #     callback=log_flush_sender_result)
-      # worker.ready()
-      launch_sender(self.send_program, server, port, self.queue_file_name)
 
   def __str__(self):
     return 'CarbonClientProtocol(%s:%d:%s)' % (self.factory.destination)
@@ -407,17 +402,3 @@ class CarbonClientManager(Service):
 
   def __str__(self):
     return "<%s[%x]>" % (self.__class__.__name__, id(self))
-
-def launch_sender(program, server, port, filename):
-    arglist = [program, server, port, filename]
-    pid = os.fork()
-    if pid == 0: # child
-        print("I'm going to launch: {0} {1} {2} {3}".format(*arglist))
-        os.execvp(arglist[0], arglist)
-    else: # parent
-        print "Waiting for child {0}".format(pid)
-        rv = os.waitpid(pid)
-        print "Child {0} returned {1}".format(pid, rv)
-
-def log_flush_sender_result(result):
-    print "Got result: {0}".format(result)

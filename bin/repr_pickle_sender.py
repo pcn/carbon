@@ -4,6 +4,8 @@
 which is a repr of a an iterator of one or more metrics.
 
 It'll pickle the output of that repr, and send it to the remote side.
+Usage:
+repr_pickle_sender.py <host> <port> <filename>
 """
 
 import os
@@ -26,7 +28,9 @@ for line in f:
     # pipes blocking.
     #
     # I may have to make this block on select indicating the pipe
-    # is free in the future, this may fail as it is now.  Until then...
+    # is free in the future, this may fail as it is now.  However,
+    # I don't think there's a high chance of a deadlock since the
+    # output from nc is going towards a network socket.
     sub_p.stdin.write(struct.pack(struct_format, len(p)) + p)
 
 os.unlink(sys.argv[3])
