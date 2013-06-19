@@ -78,7 +78,7 @@ class CarbonClientProtocol(Int32StringReceiver):
       if self.queue_file:
           fname = os.path.basename(self.queue_file_name)
           new_name = "{0}/{1}".format(self.send_queue_dir, basename)
-          os.rename(self.queue_file, self.)
+          os.rename(self.queue_file, new_name)
           self.queue_file.close() # Tidy up
 
       self.queue_file_name = "{0}.{1}".format(self.queue_file_prefix, self.next_flush_time)
