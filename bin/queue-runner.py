@@ -7,7 +7,15 @@ It does this by picking up files in the send queue directory, and
 sending them to the configured endpoint (the dest_host and dest_port
 arguments).
 
+usage: queue-runner.py <program> <host> <port> <spool dir>
 
+<program> is the program that will read files from the spool directory
+<host> is the host to get passed to <program>
+<port> is the port it will send to
+<spool dir> is the directory to read files from which will be sent.
+
+program must take host, port and the chose file from the queue as
+program <host> <port> <file>
 """
 
 
@@ -42,8 +50,11 @@ def look_at_the_queue(queue_dir):
 def pickup_something_from_the_queue(queue_dir, children, parallelism, cmd_sans_file):
     dir_contents = look_at_the_queue(queue_dir)
     if len(dir_contents) > 0:
-        sys.stdout.write("{0}\n".format(dir_contents))
-        sys.stdout.flush()
+        if set(pickup_something_from_the_queue.prior_dir_contents) != set(dir_contents):
+            sys.stdout.write("dir_contents: {0}\n".format(dir_contents))
+            sys.stdout.write("prior_dir_contents: {0}\n".format(pickup_something_from_the_queue.prior_dir_contents))
+            sys.stdout.flush()
+            pickup_something_from_the_queue.prior_dir_contents = dir_contents[:]
     items = children.items()
     if len(items) >= parallelism:
         sys.stdout.write("There are more children than the parallelism limit allows. Pass\n")
@@ -52,8 +63,8 @@ def pickup_something_from_the_queue(queue_dir, children, parallelism, cmd_sans_f
         return None # Already full
     try:
         for fname in dir_contents:
-            sys.stdout.write("Maybe {0}\n".format(fname))
-            sys.stdout.flush()
+            # sys.stdout.write("Maybe {0}\n".format(fname))
+            # sys.stdout.flush()
             if fname not in [i[1][0] for i in items]:
                 # we're not working on this already, take it
                 sys.stdout.write("Going to work on {0}\n".format(fname))
@@ -66,6 +77,8 @@ def pickup_something_from_the_queue(queue_dir, children, parallelism, cmd_sans_f
         raise
         # print "Emtpy queue"
         # return list()
+
+pickup_something_from_the_queue.prior_dir_contents = list()
 
 
 def reap_done_children(children):
@@ -103,16 +116,32 @@ def main():
     interval       = 1     # seconds
     parallelism    = 10    # number of subprocesses
     sleep_time     = 0.1 # sleep between loops
+    command        = "repr_pickle_sender.py"
     dst_host       = "127.0.0.1" # XXX Fixme
     dst_port       = "1111"      # XXX Fixme
-    command        = "repr_pickle_sender.py"
     send_queue_dir = "/var/tmp/carbon/send" # XXX FIXME to be an arg/option
     children       = dict() # Dictionary of pid, filename
 
     success_count  = 0
     failure_count  = 0
 
-    sys.stdout.write("{0} starting with queue at {1} and destination of {2}:{3}\no".format(sys.argv[0], send_queue_dir, dst_host, dst_port))
+    if len(sys.argv) < 4:
+        """usage: queue-runner.py <program> <host> <port> <spool dir>
+
+<program> is the program that will read files from the spool directory
+<host> is the host to get passed to <program>
+<port> is the port it will send to
+<spool dir> is the directory to read files from which will be sent.
+
+program must take host, port and the chose file from the queue as
+program <host> <port> <file>
+"""
+    command = sys.argv[1]
+    dst_host = sys.argv[2]
+    dst_port = sys.argv[3]
+    send_queue_dir = sys.argv[4]
+
+    sys.stdout.write("{0} starting with queue at {1} and destination of {2}:{3} and command {4}\n".format(sys.argv[0], send_queue_dir, dst_host, dst_port, command))
     sys.stdout.flush()
 
     cmd_sans_file = [command, dst_host, dst_port]
