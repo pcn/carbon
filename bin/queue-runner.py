@@ -13,6 +13,7 @@ usage: queue-runner.py <program> <host> <port> <spool dir>
 <host> is the host to get passed to <program>
 <port> is the port it will send to
 <spool dir> is the directory to read files from which will be sent.
+<timeout> is the number of seconds before killing a child process
 
 program must take host, port and the chose file from the queue as
 program <host> <port> <file>
@@ -22,6 +23,7 @@ program <host> <port> <file>
 import sys
 import os
 import os.path
+import signal
 import optparse
 import time
 import resource
@@ -57,14 +59,14 @@ def pickup_something_from_the_queue(queue_dir, children, parallelism, cmd_sans_f
             pickup_something_from_the_queue.prior_dir_contents = dir_contents[:]
     items = children.items()
     if len(items) >= parallelism:
-        sys.stdout.write("There are more children than the parallelism limit allows. Pass\n")
-        sys.stdout.flush()
+        if set(items) != set(pickup_something_from_the_queue.prior_children.items()):
+            sys.stdout.write("There are {0} children and the parallelism limit is {1}. Pass.\n".format(len(items), parallelism))
+            sys.stdout.flush()
+            pickup_something_from_the_queue.prior_children = dict(items)
         # XXX implement a kill function on transactions more than the timeout
         return None # Already full
     try:
         for fname in dir_contents:
-            # sys.stdout.write("Maybe {0}\n".format(fname))
-            # sys.stdout.flush()
             if fname not in [i[1][0] for i in items]:
                 # we're not working on this already, take it
                 sys.stdout.write("Going to work on {0}\n".format(fname))
@@ -73,17 +75,24 @@ def pickup_something_from_the_queue(queue_dir, children, parallelism, cmd_sans_f
                 cmd.append("{0}/{1}".format(queue_dir, fname))
                 sys.stdout.write("{0}\n".format(cmd))
                 children[do_fork(*cmd)] = (fname, time.time())
+            if len(children) >= parallelism:
+                return
     except TypeError: # Nothing on the queue, go
         raise
-        # print "Emtpy queue"
-        # return list()
 
 pickup_something_from_the_queue.prior_dir_contents = list()
+pickup_something_from_the_queue.prior_children = dict()
 
 
-def reap_done_children(children):
+def reap_done_children(children, timeout):
+    now = time.time()
     if len(children) < 1:
         return None
+    for child in children.items():
+        if child[1][1] + timeout < now:
+            os.kill(child[0], signal.SIGKILL)
+            sys.stdout.write("Killed pid {0} (sending {1}): timeout of {2}, was {3} seconds old\n".format(
+                child[0], child[1][0], timeout, now - child[1][1]))
     result = os.wait3(os.WNOHANG)
     if result[0] == 0 and result[1] == 0:
         return None
@@ -127,11 +136,12 @@ def main():
 
     if len(sys.argv) < 4:
         """usage: queue-runner.py <program> <host> <port> <spool dir>
-
 <program> is the program that will read files from the spool directory
 <host> is the host to get passed to <program>
 <port> is the port it will send to
 <spool dir> is the directory to read files from which will be sent.
+<parallelism> is the number of sending processes to allow
+<timeout> is the number of seconds before killing a child process
 
 program must take host, port and the chose file from the queue as
 program <host> <port> <file>
@@ -140,14 +150,16 @@ program <host> <port> <file>
     dst_host = sys.argv[2]
     dst_port = sys.argv[3]
     send_queue_dir = sys.argv[4]
+    parallelism = int(sys.argv[5])
+    timeout = int(sys.argv[6])
 
-    sys.stdout.write("{0} starting with queue at {1} and destination of {2}:{3} and command {4}\n".format(sys.argv[0], send_queue_dir, dst_host, dst_port, command))
+    sys.stdout.write("{0} starting with queue at {1} and destination of {2}:{3} and command {4} with a timeout of {5}\n".format(sys.argv[0], send_queue_dir, dst_host, dst_port, command, timeout))
     sys.stdout.flush()
 
     cmd_sans_file = [command, dst_host, dst_port]
     while True:
         pickup_something_from_the_queue(send_queue_dir, children, parallelism, cmd_sans_file)
-        reap_done_children(children) # XXX success/fail count here
+        reap_done_children(children, timeout) # XXX success/fail count here
         time.sleep(sleep_time)
 
 
