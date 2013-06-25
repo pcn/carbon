@@ -14,7 +14,7 @@ import os
 SEND_QUEUE_LOW_WATERMARK = settings.MAX_QUEUE_SIZE * settings.QUEUE_LOW_WATERMARK_PCT
 
 
-class CarbonClientProtocol(Int32StringReceiver):
+class SpoolingCarbonClientProtocol(Int32StringReceiver):
   def connectionMade(self):
     log.clients("%s::connectionMade" % self)
     self.paused = False
@@ -27,14 +27,17 @@ class CarbonClientProtocol(Int32StringReceiver):
     self.sent = 'destinations.%s.sent' % self.destinationName
     self.relayMaxQueueLength = 'destinations.%s.relayMaxQueueLength' % self.destinationName
     self.batchesSent = 'destinations.%s.batchesSent' % self.destinationName
-    self.queue_dir = '/var/tmp/carbon' # XXX make this a config option
-    self.send_queue_dir = '/var/tmp/carbon/send' # XXX make this a config option
-    self.send_program = '/mnt/graphite/bin/repr_pickle_sender.py'
-    self.queue_file_prefix = "{0}/relay.{1}.{2}/".format(self.queue_dir, self.transport.addr[0], self.transport.addr[1])
+    # XXX create the temp dir if it doesn't already exist
+    self.send_tmp_dir = "{0}/temp/{1}:{2}".format(
+        settings.SPOOLING_PATH, self.transport.addr[0],
+        self.transport.addr[1])
+    self.send_queue_dir = "{0}/send/{1}:{2}".format(
+        settings.SPOOLING_PATH, self.transport.addr[0],
+        self.transport.addr[1])
+    self.queue_file_prefix = "{0}/send".format(self.send_queue_dir)
     self.queue_file = None
     self.open_next_queue_file()
-
-    self.slowConnectionReset = 'destinations.%s.slowConnectionReset' % self.destinationName
+    # self.sec_between_flushes = settings.FLUSH_INTERVAL # seconds
 
     self.factory.connectionMade.callback(self)
     self.factory.connectionMade = Deferred()
@@ -43,13 +46,11 @@ class CarbonClientProtocol(Int32StringReceiver):
   @property
   def next_flush_time(self):
     """Get the next time, and set it if it's currently None"""
-    self.sec_between_flushes = 10 # seconds # XXX make this a config option
-
     try:
         if self._next_flush_time:
             pass
     except AttributeError:
-        self._next_flush_time = time() + self.sec_between_flushes
+        self._next_flush_time = time() + settings.FLUSH_INTERVAL
     return self._next_flush_time
 
   @next_flush_time.setter
@@ -62,11 +63,11 @@ class CarbonClientProtocol(Int32StringReceiver):
 
   def set_next_flush_time(self, next_time=None):
     """If a manual time is desired, set it - this is not an increment
-    over time.time() (aka "now"), this is the actual time at which the flush should
-    happen as seconds since the epoch.
+    over time.time() (aka "now"), this is the actual time at which the
+    flush should happen as seconds since the epoch.
     """
     if next_time is None:
-      self._next_flush_time = time() + self.sec_between_flushes
+      self._next_flush_time = time() + settings.FLUSH_INTERVAL
     else:
       self._next_flush_time = next_time
 
@@ -77,11 +78,12 @@ class CarbonClientProtocol(Int32StringReceiver):
       """
       if self.queue_file:
           fname = os.path.basename(self.queue_file_name)
-          new_name = "{0}/{1}".format(self.send_queue_dir, basename)
-          os.rename(self.queue_file, new_name)
+          new_name = "{0}/{1}".format(self.send_queue_dir, fname)
+          log.clients(" new_name is {0}".format(new_name) )
+          os.rename(self.queue_file_name, new_name)
           self.queue_file.close() # Tidy up
 
-      self.queue_file_name = "{0}.{1}".format(self.queue_file_prefix, self.next_flush_time)
+      self.queue_file_name = "{0}/{1}".format(self.send_tmp_dir, self.next_flush_time)
       self.queue_file = open(self.queue_file_name, 'w')
 
   def connectionLost(self, reason):
@@ -177,11 +179,11 @@ class CarbonClientProtocol(Int32StringReceiver):
       reactor.callLater(chained_invocation_delay, self.sendQueued)
 
   def __str__(self):
-    return 'CarbonClientProtocol(%s:%d:%s)' % (self.factory.destination)
+    return 'SpoolingCarbonClientProtocol(%s:%d:%s)' % (self.factory.destination)
   __repr__ = __str__
 
 
-class CarbonClientFactory(ReconnectingClientFactory):
+class SpoolingCarbonClientFactory(ReconnectingClientFactory):
   maxDelay = 5
 
   def __init__(self, destination):
@@ -220,7 +222,7 @@ class CarbonClientFactory(ReconnectingClientFactory):
 
   def buildProtocol(self, addr):
     self.resetDelay()
-    self.connectedProtocol = CarbonClientProtocol()
+    self.connectedProtocol = SpoolingCarbonClientProtocol()
     self.connectedProtocol.factory = self
     return self.connectedProtocol
 
@@ -360,7 +362,7 @@ class CarbonClientManager(Service):
 
     log.clients("connecting to carbon daemon at %s:%d:%s" % destination)
     self.router.addDestination(destination)
-    factory = self.client_factories[destination] = CarbonClientFactory(destination)
+    factory = self.client_factories[destination] = SpoolingCarbonClientFactory(destination)
     connectAttempted = DeferredList(
         [factory.connectionMade, factory.connectFailed],
         fireOnOneCallback=True,

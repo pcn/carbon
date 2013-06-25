@@ -39,6 +39,30 @@ class RelayRulesRouter(DatapointRouter):
         if not rule.continue_matching:
           return
 
+class SpoolingRelayRulesRouter(DatapointRouter):
+  """This class will spool to files - each destination is a path to a
+  spool directory
+  """
+  def __init__(self, rules_path):
+    self.rules_path = rules_path
+    self.rules = loadRelayRules(rules_path)
+    self.destinations = set()
+
+  def addDestination(self, destination):
+    self.destinations.add(destination)
+
+  def removeDestination(self, destination):
+    self.destinations.discard(destination)
+
+  def getDestinations(self, key):
+    for rule in self.rules:
+      if rule.matches(key):
+        for destination in rule.destinations:
+          if destination in self.destinations:
+            yield destination
+        if not rule.continue_matching:
+          return
+
 
 class ConsistentHashingRouter(DatapointRouter):
   def __init__(self, replication_factor=1):
