@@ -50,7 +50,7 @@ MAX_UPDATES_PER_SECOND = 500
 # If defined, this changes the MAX_UPDATES_PER_SECOND in Carbon when a
 # stop/shutdown is initiated.  This helps when MAX_UPDATES_PER_SECOND is
 # relatively low and carbon has cached a lot of updates; it enables the carbon
-# daemon to shutdown more quickly. 
+# daemon to shutdown more quickly.
 # MAX_UPDATES_PER_SECOND_ON_SHUTDOWN = 1000
 
 # Softly limits the number of whisper files that get created each minute.
@@ -200,6 +200,8 @@ PICKLE_RECEIVER_PORT = 2014
 # instance.
 # Enable this for carbon-relays that send to a group of carbon-aggregators
 #RELAY_METHOD = aggregated-consistent-hashing
+# Enable this to have a higher-volume relay.  This requires external configuration of a queue-runner.py for each destination.  This also handles latencies better
+#RELAY_METHOD = spooling-rules
 RELAY_METHOD = rules
 
 # If you use consistent-hashing you can add redundancy by replicating every
@@ -223,6 +225,15 @@ REPLICATION_FACTOR = 1
 # If using RELAY_METHOD = rules, all destinations used in relay-rules.conf
 # must be defined in this list
 DESTINATIONS = 127.0.0.1:2004
+
+# Each destination will have a path that is created by joining
+# SPOOLING_PATH and the host:port of the destination.
+SPOOL_DIR=/var/spool/carbon/send
+# Files are created here
+SPOOL_TEMP_DIR=/var/spool/carbon/tmp
+# Seconds between popping out the next spool file
+FLUSH_INTERVAL=10
+
 
 # This is the maximum number of datapoints that can be queued up
 # for a single destination. Once this limit is hit, we will
@@ -311,7 +322,7 @@ PICKLE_RECEIVER_PORT = 2024
 # use multiple carbon-cache instances then it would look like this:
 #
 # DESTINATIONS = 127.0.0.1:2004:a, 127.0.0.1:2104:b
-# 
+#
 # The format is comma-delimited IP:PORT:INSTANCE where the :INSTANCE part is
 # optional and refers to the "None" instance if omitted.
 #
