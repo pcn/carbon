@@ -65,6 +65,11 @@ def main():
     write_stats_like_a_mofo(queue_dir, count_per_line, lines_per_file,
         files_to_write, stat_iterator)
 
+
+def separated_metric_name(sep, length, string):
+    """We want to turn test.abcdefg into test.ab.cd.ef.g"""
+    return sep.join([ string[i:i+length] for i in range(0,len(string),length) ])
+
 def write_stats_like_a_mofo(q_dir, per_line, per_file, f_count, stat_iterator):
     line_list = list()
     t         = time.time()
@@ -78,7 +83,8 @@ def write_stats_like_a_mofo(q_dir, per_line, per_file, f_count, stat_iterator):
         try:
             for iteration in range(per_file):
                 # print "Iteration start index: {0}, end index: {1}".format(start, end)
-                line_list = [("test.{0}".format(stat_iterator.next()), (t, t)) for l in range(per_line) ]
+                line_list = [("test.{0}".format(separated_metric_name(".", 2, stat_iterator.next())),
+                              (t, t)) for l in range(per_line) ]
                 f.write(repr(line_list))
                 f.write("\n")
         except StopIteration:
