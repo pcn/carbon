@@ -53,17 +53,19 @@ def pickup_something_from_the_queue(queue_dir, children, parallelism, cmd_sans_f
     dir_contents = look_at_the_queue(queue_dir)
     if len(dir_contents) > 0:
         if set(pickup_something_from_the_queue.prior_dir_contents) != set(dir_contents):
-            sys.stdout.write("dir_contents: {0}\n".format(dir_contents))
-            sys.stdout.write("prior_dir_contents: {0}\n".format(pickup_something_from_the_queue.prior_dir_contents))
+            sys.stdout.write("queue dir has {0} waiting items\n".format(len(dir_contents)))
             sys.stdout.flush()
             pickup_something_from_the_queue.prior_dir_contents = dir_contents[:]
     items = children.items()
+    if time.time() - pickup_something_from_the_queue.last_status_time > 60: # every minute
+        sys.stdout.write( "At {0}, items contains: {1}\n".format(time.ctime(), items))
+        sys.stdout.flush()
+        pickup_something_from_the_queue.last_status_time = time.time()
     if len(items) >= parallelism:
         if set(items) != set(pickup_something_from_the_queue.prior_children.items()):
             sys.stdout.write("There are {0} children and the parallelism limit is {1}. Pass.\n".format(len(items), parallelism))
             sys.stdout.flush()
             pickup_something_from_the_queue.prior_children = dict(items)
-        # XXX implement a kill function on transactions more than the timeout
         return None # Already full
     try:
         for fname in dir_contents:
@@ -79,9 +81,10 @@ def pickup_something_from_the_queue(queue_dir, children, parallelism, cmd_sans_f
                 return
     except TypeError: # Nothing on the queue, go
         raise
-
+# Static vars for this function.
 pickup_something_from_the_queue.prior_dir_contents = list()
 pickup_something_from_the_queue.prior_children = dict()
+pickup_something_from_the_queue.last_status_time = 0
 
 
 def reap_done_children(children, timeout):
@@ -121,14 +124,7 @@ def main():
     """Watch the directory, and send queued files with a configured max
     and a configured timeout per file to be sent.  It looks for
     """
-    timeout        = 30     # seconds
-    interval       = 1     # seconds
-    parallelism    = 10    # number of subprocesses
     sleep_time     = 0.1 # sleep between loops
-    command        = "repr_pickle_sender.py"
-    dst_host       = "127.0.0.1" # XXX Fixme
-    dst_port       = "1111"      # XXX Fixme
-    send_queue_dir = "/var/tmp/carbon/send" # XXX FIXME to be an arg/option
     children       = dict() # Dictionary of pid, filename
 
     success_count  = 0
@@ -153,7 +149,8 @@ program <host> <port> <file>
     parallelism = int(sys.argv[5])
     timeout = int(sys.argv[6])
 
-    sys.stdout.write("{0} starting with queue at {1} and destination of {2}:{3} and command {4} with a timeout of {5}\n".format(sys.argv[0], send_queue_dir, dst_host, dst_port, command, timeout))
+    status = "{0} starting with queue at {1} and destination of {2}:{3} and command {4} with a timeout of {5}\n"
+    sys.stdout.write(status.format(sys.argv[0], send_queue_dir, dst_host, dst_port, command, timeout))
     sys.stdout.flush()
 
     cmd_sans_file = [command, dst_host, dst_port]
