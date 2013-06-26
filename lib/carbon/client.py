@@ -72,18 +72,22 @@ class SpoolingCarbonClientProtocol(Int32StringReceiver):
       self._next_flush_time = next_time
 
   def open_next_queue_file(self):
-      """As long as we're running, the only operation that should be
-      run on the queue file is to open one.  Doing so will close the
-      old one and do whatever is necessary for it.
+      """While running this method contains the only operations that
+      will be run on the queue file is to open one.  Doing so will
+      close the old one and do whatever is necessary - either re-name
+      if if there is data, or remove it if there is no data.
       """
       if self.queue_file:
+          size = self.queue_file.tell() # should be at the end of the file
+          if size == 0:
+              os.unlink(self.queue_file_name)
           fname = os.path.basename(self.queue_file_name)
           new_name = "{0}/{1}".format(self.send_queue_dir, fname)
           log.clients(" new_name is {0}".format(new_name) )
           os.rename(self.queue_file_name, new_name)
           self.queue_file.close() # Tidy up
 
-      self.queue_file_name = "{0}/{1}".format(self.send_tmp_dir, self.next_flush_time)
+      self.queue_file_name = "{0}/{1:.2f}".format(self.send_tmp_dir, self.next_flush_time)
       self.queue_file = open(self.queue_file_name, 'w')
 
   def connectionLost(self, reason):
