@@ -73,7 +73,7 @@ class SpoolingCarbonClientProtocol(Int32StringReceiver):
 
   def open_next_queue_file(self):
       """While running this method contains the only operations that
-      will be run on the queue file is to open one.  Doing so will
+      will be run on the queue file. Opening the file this way will
       close the old one and do whatever is necessary - either re-name
       if if there is data, or remove it if there is no data.
       """
@@ -91,14 +91,15 @@ class SpoolingCarbonClientProtocol(Int32StringReceiver):
       self.queue_file = open(self.queue_file_name, 'w')
 
   def connectionLost(self, reason):
-    """Monitor the state of the connection - we can use this as an
-    indication as to whether to bother launching child connections?
-    Maybe?  Maybe just get rid of this.
+    """Monitor the state of the connection - this is useful
+    instrumentation data, but should not be used to block writes to the
+    spool.
     """
     log.clients("%s::connectionLost %s" % (self, reason.getErrorMessage()))
     self.connected = False
 
   def pauseProducing(self):
+    """XXX self.paused should be ignored for the purposes of writing to the spool."""
     self.paused = True
 
   def resumeProducing(self):
