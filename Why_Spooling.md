@@ -38,9 +38,9 @@ to the relay code which was inefficient.  The core of the problem was
 seen as being two-fold:
 
 1. The code in 0.9.10 and prior was using a regular python list as its
-main queue, and regularly adding to it, then removing one graph, and
-copying the remainder of the list to another list.  This is very
-inefficient in python.
+main queue, and regularly adding one metric to it, then removing one
+metric, and copying the remainder of the list to another list.  This
+is very inefficient in python.
 
 2. The path for metrics was defaulting to sending a metric as soon as
 it was received.  This prevented there being any benefit from batching
