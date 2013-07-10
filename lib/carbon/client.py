@@ -8,6 +8,7 @@ from carbon.util import pickle
 from carbon import log, state, instrumentation
 from collections import deque
 from time import time
+import itertools
 import os
 
 
@@ -35,8 +36,9 @@ class SpoolingCarbonClientProtocol(Int32StringReceiver):
         settings.SPOOLING_PATH, self.transport.addr[0],
         self.transport.addr[1])
     self.queue_file_prefix = "{0}/send".format(self.send_queue_dir)
-    self.queue_file = None
-    self.open_next_queue_file()
+    self.queue_file_list = list()
+    self.next_file = itertools.cycle(range(settings.QUEUE_SPREAD))
+    self.open_next_queue_file_list()
     # self.sec_between_flushes = settings.FLUSH_INTERVAL # seconds
 
     self.factory.connectionMade.callback(self)
@@ -71,24 +73,59 @@ class SpoolingCarbonClientProtocol(Int32StringReceiver):
     else:
       self._next_flush_time = next_time
 
-  def open_next_queue_file(self):
-      """While running this method contains the only operations that
-      will be run on the queue file. Opening the file this way will
-      close the old one and do whatever is necessary - either re-name
-      if if there is data, or remove it if there is no data.
-      """
-      if self.queue_file:
-          size = self.queue_file.tell() # should be at the end of the file
-          if size == 0:
-              os.unlink(self.queue_file_name)
-          fname = os.path.basename(self.queue_file_name)
-          new_name = "{0}/{1}".format(self.send_queue_dir, fname)
-          log.clients(" new_name is {0}".format(new_name) )
-          os.rename(self.queue_file_name, new_name)
-          self.queue_file.close() # Tidy up
+  def open_next_queue_file_list(self):
+      """The queue file should only ever be opened via this method.
+      This will open 1 or more queue files that will have metrics
+      shuffled between them.  Each file will be stored in
+      self.queue_file_list.  Each element of the list is a 2-item
+      tuple.
+      qf[0] = file object
+      qf[1] = path (string)
 
-      self.queue_file_name = "{0}/{1:.2f}".format(self.send_tmp_dir, self.next_flush_time)
-      self.queue_file = open(self.queue_file_name, 'w')
+      Note: the name settings.QUEUE_SPREAD should be changed to
+      something that has an easier to grasp meaning.
+      """
+
+      # For the purpose of measuring the effect of things besides
+      # disk read/write speed, allow for /dev/null to be the
+      # SPOOLING_PATH.  When this is the case, instead of
+      # doing any fancy spooling, just use /dev/null, always.
+      # However, use the QUEUE_SPREAD in order to see the impact
+      # of multiple syscalls to write to the special file.
+      # This may fail on windows.  It's tests code, I don't know
+      # what the windows equivalent would be without cygwin
+      if settings.SPOOLING_PATH == "/dev/null":
+        log.relay("WARNING you are testing with the /dev/null writer.  This should only be used to test speed, as it will throw away actual metrics")
+        if len(self.queue_file_list) > 0:
+          self.queue_file_list = list()
+        for spread in range(settings.QUEUE_SPREAD):
+          self.queue_file_list.append([open("/dev/null", "w"), "/dev/null"])
+        return
+
+      if len(self.queue_file_list) > 0:
+        for qf in self.queue_file_list:
+          size = qf[0].tell() # should be at the end of the file
+          if size == 0:
+            os.unlink(qf[1])
+          else:
+            fname = os.path.basename(qf[1])
+            # new_name = "{0}/{1}".format(self.send_queue_dir, fname)
+            new_name = os.path.join(self.send_queue_dir, fname)
+            log.clients("fname is {0} and new_name is {1}".format(fname, new_name) )
+            os.rename(qf[1], new_name)
+            qf[0].close() # Tidy up
+      self.queue_file_list = list()
+      for spread in range(settings.QUEUE_SPREAD):
+        queue_file_name = "{0}/{1:.2f}.{2:03}".format(self.send_tmp_dir, self.next_flush_time, spread)
+        queue_file = open(queue_file_name, 'w')
+        self.queue_file_list.append((queue_file, queue_file_name,))
+
+
+  def write_to_spool(self, string_to_write):
+    """Writes to the next spool file"""
+    index = self.next_file.next()
+    self.queue_file_list[index][0].write(string_to_write)
+
 
   def connectionLost(self, reason):
     """Monitor the state of the connection - this is useful
@@ -129,7 +166,8 @@ class SpoolingCarbonClientProtocol(Int32StringReceiver):
       pickles.
       """
       # self.sendString(pickle.dumps(datapoints, protocol=-1))
-      self.queue_file.write(repr(datapoints) + "\n")
+      self.write_to_spool(repr(datapoints) + "\n")
+      # self.queue_file.write(repr(datapoints) + "\n")
       # XXX Change "sent" to "written"?
       instrumentation.increment(self.sent, len(datapoints))
       instrumentation.increment(self.batchesSent)
@@ -176,7 +214,7 @@ class SpoolingCarbonClientProtocol(Int32StringReceiver):
     self._sendDatapoints(self.factory.takeSomeFromQueue())
     if time() >= self.next_flush_time:
         self.set_next_flush_time()
-        self.open_next_queue_file()
+        self.open_next_queue_file_list()
     if (self.factory.queueFull.called and
         queueSize < SEND_QUEUE_LOW_WATERMARK):
       self.factory.queueHasSpace.callback(queueSize)

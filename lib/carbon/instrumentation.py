@@ -6,7 +6,7 @@ from resource import getrusage, RUSAGE_SELF
 from twisted.application.service import Service
 from twisted.internet.task import LoopingCall
 from carbon.conf import settings
-
+from carbon import log
 
 stats = {}
 prior_stats = {}
@@ -155,8 +155,10 @@ def relay_record(metric, value):
       fullMetric = '%s.relays.%s.%s' % (prefix, HOSTNAME, metric)
     else:
       fullMetric = '%s.relays.%s-%s.%s' % (prefix, HOSTNAME, settings.instance, metric)
+    log.relay("{0} {1}".format(fullMetric, value))
     datapoint = (time.time(), value)
     events.metricGenerated(fullMetric, datapoint)
+
 
 def aggregator_record(metric, value):
     prefix = settings.CARBON_METRIC_PREFIX

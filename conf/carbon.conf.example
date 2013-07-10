@@ -187,8 +187,9 @@ PICKLE_RECEIVER_INTERFACE = 0.0.0.0
 PICKLE_RECEIVER_PORT = 2014
 
 # Use the UDP receiver to allow the queue-runner to send perf data
+ENABLE_UDP_LISTENER = True
 UDP_RECEIVER_INTERFACE = 0.0.0.0
-UDP_RECEIVER_PORT = 2003
+UDP_RECEIVER_PORT = 2013
 
 # Carbon-relay has several options for metric routing controlled by RELAY_METHOD
 #
@@ -232,9 +233,8 @@ DESTINATIONS = 127.0.0.1:2004
 
 # Each destination will have a path that is created by joining
 # SPOOLING_PATH and the host:port of the destination.
-SPOOL_DIR=/var/spool/carbon/send
-# Files are created here
-SPOOL_TEMP_DIR=/var/spool/carbon/tmp
+SPOOLING_PATH=/var/spool/carbon
+
 # Seconds between popping out the next spool file
 FLUSH_INTERVAL=10
 
