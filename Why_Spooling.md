@@ -206,6 +206,18 @@ Some ideas that could take advantage of this:
   and the parallelism can be changed in order to decrease or increase
   the rate at which metrics catch-up.
 
+* micro-aggregators: if some computation is very heavy-weight, then it
+  can be turned into a micro-aggregator.  Instead of the default
+  sender, the micro-aggregator can read the spool, and every <some
+  period> seconds it can perform an arbitrary agrregation function,
+  and feed the results back into the relay.  The rules-based relay can
+  be used to forward only the relevant metrics to the
+  micro-aggregation destination (which could be local or remote) and
+  the function(s) necessary could be run, data preserved for the
+  desired time - basically anything could be done, and the results
+  forwarded on as a "business policy" defined outside of the main
+  purpose of the carbon metrics relay functionality.
+
 Issues
 ======
 
