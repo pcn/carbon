@@ -210,14 +210,20 @@ Some ideas that could take advantage of this:
   can be turned into a micro-aggregator.  Instead of the default
   sender, the micro-aggregator can read the spool, and every period
   (some number of seconds defined by the aggregator in question) it
-  can perform an arbitrary agrregation function, and feed the results
+  can perform an arbitrary aggregation function, and feed the results
   back into the relay.  The rules-based relay can be used to forward
   only the relevant metrics to the micro-aggregation destination
   (which could be local or remote) and the function(s) necessary could
   be run, data preserved for the desired time - basically anything
   could be done, and the results forwarded on as a "business policy"
   defined outside of the main purpose of the carbon metrics relay
-  functionality.
+  functionality.  The idea behind this is providing a way to create
+  derived metrics that are normally done at render time, but which can
+  crush a front-end.  E.g. a dashboard that does something like this:
+
+  ```
+alias(log(highestMax(divideSeries(movingAverage(perSecond(sumSeries(foo.*.actors.total-output-keys-since-restart.gauge.value)),10),movingAverage(perSecond(sumSeries(bar.*.internal.actors.total-dirty-keys-since-restart.gauge.value)),10)),1),2),"NotSoSimpleAggregation")
+  ```
 
 Issues
 ======
