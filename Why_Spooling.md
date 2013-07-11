@@ -166,3 +166,86 @@ the outbound queue.  The queue runners can run their queue.  In
 principle, the relay can now just relay to disk - even if one of the
 destinations is down, the metrics can just be written to disk, to be
 delivered when that destination is back.  No in-memory queueing.
+
+Some other advantages
+=====================
+
+There is a complexity cost in implementing carbon-compatible processes
+in other languages.  The combination of the twisted format that's
+being used to send over the wire, and the use of the python pickle
+format means that using the current relay pretty much ties all
+interaction with carbon to using tools implemented in python.
+
+Why?  Well, even though a metric can come in via the pickle protocol
+(binary serialized format) or via the line protocol (line-oriented
+text protocol), once that metric hits the relay, there is currently
+only support for ferrying the metric along via the binary pickle
+format via tcp.  That's not codified or required by the receiving
+side.  It's because the only sending code that's implemented is the
+binary pickle sender.
+
+By de-coupling via spooling, the spool can be written to in some
+format, but sent in another format.
+
+Some ideas that could take advantage of this:
+
+* Send to riemann using the line protocol.  This would allow analysis
+  of data in the carbon stream by riemann without having to implement
+  the python pickle protocol in clojure (not impossible, but not
+  necesarily the best use of one's time)
+
+* Write to a separate data store (e.g. opentsdb, kairosdb, etc)
+
+* Experiment with other serialization protocols to judge the impact
+  of changes.
+
+* Make it easier to test by writing test loads to a spool, and watching
+  the performance of the relay and caches under artificial loads.
+
+* If the load characteristics change, a single spool can be stopped,
+  and the parallelism can be changed in order to decrease or increase
+  the rate at which metrics catch-up.
+
+Issues
+======
+
+There are some things that I'd like to do better.
+
+* Currently the # of metrics that a sender is sending is only reported
+  at the end of a run.  So if you have a million metrics that are sent
+  over 5 minutes via 1 process, the queue-runner will only report that
+  at the end of 5 minutes (it will, however, report both the time
+  taken and the number of stats so the correct rate will be reported,
+  but it would appear that far fewer metrics were sent than actually
+  were because the rate of 200,000/minute over that 5 minutes will be
+  reported for 1 minute only, not over 5 minutes).  It should be
+  possible to have the sender report metrics every few seconds and
+  have the queue-runner read and report that via select()ing or
+  poll()ing on the pipe communicating with the child, in order to
+  provide better intrumentation.
+
+* I'm eval()ing python repr() output of the lists that the relay
+  creates internally.  I feel like ths should be safe, but I'm not
+  entirely comfortable with this.  Aside from something like json,
+  which has greater parsing overhead than python reprs, I'm not sure
+  if there is a better (fast, language-neutral, human-readable) format
+  for spooling data.  Some advantages of the repr format is that it is
+  line-oriented the way I'm using it, an that implicitly allows the
+  relay to control the batch size of all of the senders.  This may not
+  be a great idea, either - it may be better to make each sender
+  configurable.  If that implicit configuration isn't that important,
+  it may be better to just use the carbon line format instead?
+
+  In addition, the use of eval() in the sender does mean that if the
+  spool is not secured, the sender can be asked to do truly horrible
+  things.  This isn't news to an experienced python developer, or to
+  an experienced sysadmin, but graphite is great because it has a low
+  barrier to entry, and this sort of "oops" is easy to make if it's
+  done by someone who doesn't understand why it's important.
+
+* Currently, "nc" (netcat) is used to actually communicate with the
+  network.  This is a huge time-saver - it means no network
+  programming!  And network programming is very easy, and very easy to
+  do wrong.  I expect that in the final form the default repr sender
+  will open its own socket and write to it, etc. and that'll all be
+  fine, but for now nc is what's doing the heavy lifting there.
