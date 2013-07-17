@@ -31,6 +31,13 @@ struct_format = "!I"
 f.seek(-1, 2)
 size = f.tell()
 f.seek(0)
+# We can receive metrics whose values are "Infity", e.g.:
+# Platform2.Superman.RecommendationService.i-a50645c5.internal.actors.ratio-output-vs-input.StaticUrgencyTickHistorian.gauge.value Infinity 1374043609
+#
+# I'm seriously wondering when we'll get NaN?
+#
+# set inf=-1 for right now
+inf=-1
 
 if size == 0:
     # print "DEBUG: File {0} is zero length, removing it".format(fname)
