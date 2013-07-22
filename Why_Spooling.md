@@ -225,6 +225,11 @@ Some ideas that could take advantage of this:
 alias(log(highestMax(divideSeries(movingAverage(perSecond(sumSeries(foo.*.actors.total-output-keys-since-restart.gauge.value)),10),movingAverage(perSecond(sumSeries(bar.*.internal.actors.total-dirty-keys-since-restart.gauge.value)),10)),1),2),"NotSoSimpleAggregation")
   ```
 
+* Securing the channel.  If you're sending over the big bad internet
+  you may want to have some flexibility in being able to use ssl, or
+  just maybe feeding the data to your own cipher, or making your own
+  decision as to what works best for you
+
 Issues
 ======
 
