@@ -136,8 +136,10 @@ class SpoolingCarbonClientProtocol(Int32StringReceiver):
     self.connected = False
 
   def pauseProducing(self):
-    """XXX self.paused should be ignored for the purposes of writing to the spool."""
-    self.paused = True
+    """
+    For a relay that spools to disk, never pause
+    """
+    self.paused = False
 
   def resumeProducing(self):
     self.paused = False
