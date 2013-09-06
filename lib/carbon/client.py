@@ -22,11 +22,122 @@ class SpoolingCarbonClientProtocol(Int32StringReceiver):
     self.transport.registerProducer(self, streaming=True)
     # Define internal metric names
     self.lastResetTime = time()
-    self.destinationName = self.factory.destinationName
+
+    self.factory.connectionMade.callback(self)
+    self.factory.connectionMade = Deferred()
+    self.sendQueued()
+
+  def connectionLost(self, reason):
+    """Monitor the state of the connection - this is useful
+    instrumentation data, but should not be used to block writes to the
+    spool.
+    """
+    log.clients("%s::connectionLost %s" % (self, reason.getErrorMessage()))
+    self.connected = False
+
+  def pauseProducing(self):
+    """XXX self.paused should be ignored for the purposes of writing to the spool."""
+    self.paused = False
+
+  def resumeProducing(self):
+    self.paused = False
+    self.sendQueued()
+
+  def stopProducing(self):
+    self.disconnect()
+
+  def disconnect(self):
+    if self.connected:
+      self.transport.unregisterProducer()
+      self.transport.loseConnection()
+      self.connected = False
+
+  def sendDatapoint(self, metric, datapoint):
+    self.factory.enqueue(metric, datapoint)
+    reactor.callLater(settings.TIME_TO_DEFER_SENDING, self.sendQueued)
+
+  def _sendDatapoints(self, datapoints):
+      """Once some number of datapoints have been accumulated, write
+      them to a file, and that file will be delivered to the remote
+      end.
+
+      The format of the file is repr, so we'll eval the file, line by line
+      and send the file.  Should be cheaper and easier than using multiple
+      pickles.
+      """
+      # self.sendString(pickle.dumps(datapoints, protocol=-1))
+      self.queue_file.write(repr(datapoints) + "\n")
+      # XXX Change "sent" to "written"?
+      instrumentation.increment(self.factory.sent, len(datapoints))
+      instrumentation.increment(self.factory.batchesSent)
+      self.factory.checkQueue()
+
+  def sendQueued(self):
+    """This should be the only method that will be used to send stats.
+    In order to not hold the event loop and prevent stats from flowing
+    in while we send them out, this will process
+    settings.MAX_DATAPOINTS_PER_MESSAGE stats, write them to the
+    queue, and if there are still items in the queue, this will invoke
+    reactor.callLater to schedule another run of sendQueued after a
+    very short wait.
+
+    When spooling, the MAX_DATAPOINTS_PER_MESSAGE will determine how
+    many metrics will be put per line of a file, and that can be
+    naively used as a batch size.  Something more sophisticated can be
+    done as well, but doesn't need to be if the batch size used makes
+    sense.
+    """
+    chained_invocation_delay = 0.0001
+    queueSize = self.factory.queueSize
+
+    instrumentation.max(self.factory.relayMaxQueueLength, queueSize)
+    if not self.factory.hasQueuedDatapoints():
+      return
+
+    self._sendDatapoints(self.factory.takeSomeFromQueue())
+    if time() >= self.next_flush_time:
+        self.set_next_flush_time()
+        self.factory.open_next_queue_file()
+    if (self.factory.queueFull.called and
+        queueSize < SEND_QUEUE_LOW_WATERMARK):
+      self.factory.queueHasSpace.callback(queueSize)
+    if self.factory.hasQueuedDatapoints():
+      reactor.callLater(chained_invocation_delay, self.sendQueued)
+
+  def __str__(self):
+    return 'SpoolingCarbonClientProtocol(%s:%d:%s)' % (self.factory.destination)
+  __repr__ = __str__
+
+
+class SpoolingCarbonClientFactory(ReconnectingClientFactory):
+  maxDelay = 5
+
+  def __init__(self, destination):
+    self.destination = destination
+    self.destinationName = ('%s:%d:%s' % destination).replace('.', '_')
+    self.host, self.port, self.carbon_instance = destination
+    self.addr = (self.host, self.port)
+    self.started = False
+    # This factory maintains protocol state across reconnects
+    self.queue = deque() # Change to make this the sole source of metrics to be sent.
+    self.connectedProtocol = None
+    self.queueEmpty = Deferred()
+    self.queueFull = Deferred()
+    self.queueFull.addCallback(self.queueFullCallback)
+    self.queueHasSpace = Deferred()
+    self.queueHasSpace.addCallback(self.queueSpaceCallback)
+    self.connectFailed = Deferred()
+    self.connectionMade = Deferred()
+    self.connectionLost = Deferred()
+    # Define internal metric names
     self.queuedUntilReady = 'destinations.%s.queuedUntilReady' % self.destinationName
     self.sent = 'destinations.%s.sent' % self.destinationName
     self.relayMaxQueueLength = 'destinations.%s.relayMaxQueueLength' % self.destinationName
     self.batchesSent = 'destinations.%s.batchesSent' % self.destinationName
+
+    self.attemptedRelays = 'destinations.%s.attemptedRelays' % self.destinationName
+    self.fullQueueDrops = 'destinations.%s.fullQueueDrops' % self.destinationName
+    self.queuedUntilConnected = 'destinations.%s.queuedUntilConnected' % self.destinationName
     # XXX create the temp dir if it doesn't already exist
     self.send_tmp_dir = "{0}/temp/{1}:{2}".format(
         settings.SPOOLING_PATH, self.transport.addr[0],
@@ -39,9 +150,6 @@ class SpoolingCarbonClientProtocol(Int32StringReceiver):
     self.open_next_queue_file()
     # self.sec_between_flushes = settings.FLUSH_INTERVAL # seconds
 
-    self.factory.connectionMade.callback(self)
-    self.factory.connectionMade = Deferred()
-    self.sendQueued()
 
   @property
   def next_flush_time(self):
@@ -95,112 +203,8 @@ class SpoolingCarbonClientProtocol(Int32StringReceiver):
       self.queue_file_name = "{0}/{1:.2f}".format(self.send_tmp_dir, self.next_flush_time)
       self.queue_file = open(self.queue_file_name, 'w')
 
-  def connectionLost(self, reason):
-    """Monitor the state of the connection - this is useful
-    instrumentation data, but should not be used to block writes to the
-    spool.
-    """
-    log.clients("%s::connectionLost %s" % (self, reason.getErrorMessage()))
-    self.connected = False
-
-  def pauseProducing(self):
-    """XXX self.paused should be ignored for the purposes of writing to the spool."""
-    self.paused = False
-
-  def resumeProducing(self):
-    self.paused = False
-    self.sendQueued()
-
-  def stopProducing(self):
-    self.disconnect()
-
-  def disconnect(self):
-    if self.connected:
-      self.transport.unregisterProducer()
-      self.transport.loseConnection()
-      self.connected = False
-
-  def sendDatapoint(self, metric, datapoint):
-    self.factory.enqueue(metric, datapoint)
-    reactor.callLater(settings.TIME_TO_DEFER_SENDING, self.sendQueued)
-
-  def _sendDatapoints(self, datapoints):
-      """Once some number of datapoints have been accumulated, write
-      them to a file, and that file will be delivered to the remote
-      end.
-
-      The format of the file is repr, so we'll eval the file, line by line
-      and send the file.  Should be cheaper and easier than using multiple
-      pickles.
-      """
-      # self.sendString(pickle.dumps(datapoints, protocol=-1))
-      self.queue_file.write(repr(datapoints) + "\n")
-      # XXX Change "sent" to "written"?
-      instrumentation.increment(self.sent, len(datapoints))
-      instrumentation.increment(self.batchesSent)
-      self.factory.checkQueue()
-
-  def sendQueued(self):
-    """This should be the only method that will be used to send stats.
-    In order to not hold the event loop and prevent stats from flowing
-    in while we send them out, this will process
-    settings.MAX_DATAPOINTS_PER_MESSAGE stats, write them to the
-    queue, and if there are still items in the queue, this will invoke
-    reactor.callLater to schedule another run of sendQueued after a
-    very short wait.
-
-    When spooling, the MAX_DATAPOINTS_PER_MESSAGE will determine how
-    many metrics will be put per line of a file, and that can be
-    naively used as a batch size.  Something more sophisticated can be
-    done as well, but doesn't need to be if the batch size used makes
-    sense.
-    """
-    chained_invocation_delay = 0.0001
-    queueSize = self.factory.queueSize
-
-    instrumentation.max(self.relayMaxQueueLength, queueSize)
-    if not self.factory.hasQueuedDatapoints():
-      return
-
-    self._sendDatapoints(self.factory.takeSomeFromQueue())
-    if time() >= self.next_flush_time:
-        self.set_next_flush_time()
-        self.open_next_queue_file()
-    if (self.factory.queueFull.called and
-        queueSize < SEND_QUEUE_LOW_WATERMARK):
-      self.factory.queueHasSpace.callback(queueSize)
-    if self.factory.hasQueuedDatapoints():
-      reactor.callLater(chained_invocation_delay, self.sendQueued)
-
-  def __str__(self):
-    return 'SpoolingCarbonClientProtocol(%s:%d:%s)' % (self.factory.destination)
-  __repr__ = __str__
 
 
-class SpoolingCarbonClientFactory(ReconnectingClientFactory):
-  maxDelay = 5
-
-  def __init__(self, destination):
-    self.destination = destination
-    self.destinationName = ('%s:%d:%s' % destination).replace('.', '_')
-    self.host, self.port, self.carbon_instance = destination
-    self.addr = (self.host, self.port)
-    self.started = False
-    # This factory maintains protocol state across reconnects
-    self.queue = deque() # Change to make this the sole source of metrics to be sent.
-    self.connectedProtocol = None
-    self.queueEmpty = Deferred()
-    self.queueFull = Deferred()
-    self.queueFull.addCallback(self.queueFullCallback)
-    self.queueHasSpace = Deferred()
-    self.queueHasSpace.addCallback(self.queueSpaceCallback)
-    self.connectFailed = Deferred()
-    self.connectionMade = Deferred()
-    self.connectionLost = Deferred()
-    # Define internal metric names
-    self.attemptedRelays = 'destinations.%s.attemptedRelays' % self.destinationName
-    self.fullQueueDrops = 'destinations.%s.fullQueueDrops' % self.destinationName
-    self.queuedUntilConnected = 'destinations.%s.queuedUntilConnected' % self.destinationName
   def queueFullCallback(self, result):
     state.events.cacheFull()
     log.clients('%s send queue is full (%d datapoints)' % (self, result))
@@ -268,18 +272,18 @@ class SpoolingCarbonClientFactory(ReconnectingClientFactory):
     self.queue.appendleft((metric, datapoint))
 
   def sendDatapoint(self, metric, datapoint):
-    instrumentation.increment(self.attemptedRelays)
+    instrumentation.increment(self.factory.attemptedRelays)
     if self.queueSize >= settings.MAX_QUEUE_SIZE:
       if not self.queueFull.called:
         self.queueFull.callback(self.queueSize)
-      instrumentation.increment(self.fullQueueDrops)
+      instrumentation.increment(self.factory.fullQueueDrops)
     else:
       self.enqueue(metric, datapoint)
 
     if self.connectedProtocol:
       reactor.callLater(settings.TIME_TO_DEFER_SENDING, self.connectedProtocol.sendQueued)
     else:
-      instrumentation.increment(self.queuedUntilConnected)
+      instrumentation.increment(self.factory.queuedUntilConnected)
 
   def sendHighPriorityDatapoint(self, metric, datapoint):
     """The high priority datapoint is one relating to the carbon
@@ -292,13 +296,13 @@ class SpoolingCarbonClientFactory(ReconnectingClientFactory):
     capacity has been reached.  This relies on not creating the deque
     with a fixed max size.
     """
-    instrumentation.increment(self.attemptedRelays)
+    instrumentation.increment(self.factory.attemptedRelays)
     self.enqueue_from_left(metric, datapoint)
 
     if self.connectedProtocol:
       reactor.callLater(settings.TIME_TO_DEFER_SENDING, self.connectedProtocol.sendQueued)
     else:
-      instrumentation.increment(self.queuedUntilConnected)
+      instrumentation.increment(self.factory.queuedUntilConnected)
 
   def startedConnecting(self, connector):
     log.clients("%s::startedConnecting (%s:%d)" % (self, connector.host, connector.port))
