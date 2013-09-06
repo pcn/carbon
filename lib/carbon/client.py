@@ -144,39 +144,23 @@ class SpoolingCarbonClientProtocol(Int32StringReceiver):
     """This should be the only method that will be used to send stats.
     In order to not hold the event loop and prevent stats from flowing
     in while we send them out, this will process
-    settings.MAX_DATAPOINTS_PER_MESSAGE stats, send them, and if there
-    are still items in the queue, this will invoke reactor.callLater
-    to schedule another run of sendQueued after a reasonable enough time
-    for the destination to process what it has just received.
+    settings.MAX_DATAPOINTS_PER_MESSAGE stats, write them to the
+    queue, and if there are still items in the queue, this will invoke
+    reactor.callLater to schedule another run of sendQueued after a
+    very short wait.
 
-    Given a queue size of one million stats, and using a
-    chained_invocation_delay of 0.0001 seconds, you'd get 1,000
-    sendQueued() invocations/second max.  With a
-    settings.MAX_DATAPOINTS_PER_MESSAGE of 100, the rate of stats being
-    sent could theoretically be as high as 100,000 stats/sec, or
-    6,000,000 stats/minute.  This is probably too high for a typical
-    receiver to handle.
-
-    In practice this theoretical max shouldn't be reached because
-    network delays should add an extra delay - probably on the order
-    of 10ms per send, so the queue should drain with an order of
-    minutes, which seems more realistic.
+    When spooling, the MAX_DATAPOINTS_PER_MESSAGE will determine how
+    many metrics will be put per line of a file, and that can be
+    naively used as a batch size.  Something more sophisticated can be
+    done as well, but doesn't need to be if the batch size used makes
+    sense.
     """
     chained_invocation_delay = 0.0001
     queueSize = self.factory.queueSize
 
     instrumentation.max(self.relayMaxQueueLength, queueSize)
-    if self.paused:
-      instrumentation.max(self.queuedUntilReady, queueSize)
-      return
     if not self.factory.hasQueuedDatapoints():
       return
-
-    # if settings.USE_RATIO_RESET is True:
-    #   if not self.connectionQualityMonitor():
-    #     self.resetConnectionForQualityReasons("Sent: {0}, Received: {1}".format(
-    #       instrumentation.prior_stats.get(self.sent, 0),
-    #       instrumentation.prior_stats.get('metricsReceived', 0)))
 
     self._sendDatapoints(self.factory.takeSomeFromQueue())
     if time() >= self.next_flush_time:
