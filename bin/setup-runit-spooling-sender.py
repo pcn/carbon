@@ -18,7 +18,7 @@ timeout     - the timeout before a sending process should be killed
 
 Example:
 
-sudo setup_runit_spooling_sender.py \
+sudo setup-runit-spooling-sender.py \
     ec2-54-235-34-178.compute-1.amazonaws.com \
     2004 \
     /var/spool/carbon \
@@ -113,7 +113,13 @@ def main(argv=sys.argv[:]):
     make_spool_dirs(spool_path, hostandport, owner)
     make_log_dir(log_dir, hostandport, "root")
     runit_run = """#!/bin/sh
-. /opt/graphite/bin/activate
+if [ -f /opt/graphite/bin/activate ] ; then
+    . /opt/graphite/bin/activate
+fi
+
+PATH=/opt/graphite/bin:$PATH
+export PATH
+
 exec 2>&1
 exec chpst -u {0}:{1} -- \
     /opt/graphite/bin/queue-runner.py \
