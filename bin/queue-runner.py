@@ -77,11 +77,11 @@ def do_fork(command, dst_host, dst_port, filename, write_pipe):
 
 def log_and_kill_overtime_processes(children, timeout):
     now = time.time()
-    for child in children.items():
-        if child[1][1] + timeout < now:
-            os.kill(child[0], signal.SIGKILL)
+    for pid, child_val in children.items():
+        if child_val[1] + timeout < now:
+            os.kill(pid, signal.SIGKILL)
             sys.stdout.write("Killed pid {0} (sending {1}): timeout of {2}, was {3} seconds old\n".format(
-                child[0], child[1][0], timeout, now - child[1][1]))
+                pid, child_val[0], timeout, now - child_val[1]))
 
 def get_sorted_queue(queue_dir):
     """Return a sorted list of the queue files"""
