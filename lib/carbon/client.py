@@ -188,15 +188,15 @@ class SpoolingCarbonClientFactory(ReconnectingClientFactory):
       if self.queue_file:
           size = self.queue_file.tell() # should be at the end of the file
           self.queue_file.close()
-          if size == 0:
-              try:
+          # in case it was deleted by hand, no crying over spilt milk
+          # https://github.com/pcn/carbon/issues/15
+          try:
+              if size == 0:
                   os.unlink(self.queue_file_name)
-              except IOError:
-                  # in case it was deleted by hand, no crying over spilt milk
-                  # https://github.com/pcn/carbon/issues/15
-                  pass
-          else:
-              os.rename(self.queue_file_name, new_name) # Tidy up
+              else:
+                  os.rename(self.queue_file_name, new_name) # Tidy up
+          except IOError:
+              pass
           fname = os.path.basename(self.queue_file_name)
           new_name = "{0}/{1}".format(self.send_queue_dir, fname)
           log.clients("%s::open_next_queue_file new_name is {0}".format(self, new_name) )
