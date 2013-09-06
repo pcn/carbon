@@ -138,9 +138,8 @@ def check_and_run_queue(queue_dir, children, parallelism, cmd_sans_file):
     conditions are OK for a spool file to be run.  If conditions
     are auspicious, then it shall be done.
     """
+    check_children_status(children)
     if check_dir_contents(queue_dir, children) is False:
-        return False
-    if check_children_status(children) is False:
         return False
     if parallelism_below_limit(children, parallelism) is False:
         return False
