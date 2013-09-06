@@ -158,7 +158,9 @@ def run_the_queue(queue_dir, children, parallelism, cmd_sans_file):
 
 # XXX have this called from a signal handler, maybe?
 def reap_done_child(children, timeout):
-    """Each invocation of this will reap a child."""
+    """Each invocation of this will reap a child.  It will also invoke
+    log_and_kill_overtime_processes() so, it may well create more work
+    for itself, and cause itself to get invoked again"""
     if len(children) < 1:
         return None
     log_and_kill_overtime_processes(children, timeout)
@@ -170,7 +172,6 @@ def reap_done_child(children, timeout):
         # sys.stdout.write("DEBUG: pid: {0}, status: {1}, usage: {2}\n".format(pid, status, usage))
         # sys.stdout.flush()
         if status != 0: # XXX instead of kill, we could use term first and try to get instrumentation from the dead process.
-            # XXX Log the failure
             sys.stdout.write("Pid: {0} failed with an exit code of {1}\n".format(pid, status))
             sys.stdout.flush()
 
