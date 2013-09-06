@@ -39,9 +39,10 @@ if size == 0:
 
 sub_p = subprocess.Popen(['nc', sys.argv[1], sys.argv[2]],
                          stdin=subprocess.PIPE)
-start_time = time.time()
 # print("DEBUG: Sending {0} bytes with {1}".format(size, sys.argv))
+start_time   = time.time()
 metric_count = 0
+errored      = False
 for line in f:
     try:
         l = eval(line)
@@ -49,13 +50,17 @@ for line in f:
         metric_count += len(l)
     except TypeError as te:
         print "ERROR: TypeError trying to pickle '{0}'".format(line)
+        errored = True
         continue
     except SyntaxError as se:
         print "ERROR: SyntaxError trying to pickle '{0}'".format(line)
+        errored = True
         continue
     try:
         sub_p.stdin.write(struct.pack(struct_format, len(p)) + p)
-    except IOError:
+    except IOError as ioe:
+        print "ERROR: IOError trying to send {0}: {1}".format(fname, l)
+        print "ERROR: the message is: {0}".format(str(ioe))
         break # No child, get out of here
 
 sub_p.terminate()
@@ -73,5 +78,6 @@ except OSError:
     print("INFO: {0} sent {1} bytes for {2} metrics in {3} second(s) ({4} bytes/second, {5} metrics/second) from {6}".format(
         os.path.basename(sys.argv[0]), size, metric_count, time_taken, bytes_per_second, metrics_per_second, fname))
 
-
+# XXX add a rename() to a file that the queue dispatcher will ignore instead
+# of an unlink here.  -PN
 os.unlink(sys.argv[3])
