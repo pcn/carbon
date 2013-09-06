@@ -121,7 +121,7 @@ parallelism_below_limit.prior_items = 0
 def pickup_something_from_the_queue(queue_dir, children, cmd_sans_file):
     """Runs on the first file to be found in the queue dir"""
     for fname in sorted(os.listdir(queue_dir)):
-        if fname not in [i[1][0] for i in children.items()]:
+        if fname not in [i[0] for i in children.values()]:
             # we're not working on this already, take it
             do_fork_args = cmd_sans_file[:]
             do_fork_args.append("{0}/{1}".format(queue_dir, fname))
