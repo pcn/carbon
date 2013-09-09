@@ -8,6 +8,7 @@ from carbon.util import pickle
 from carbon import log, state, instrumentation
 from collections import deque
 from time import time
+import json
 import os
 
 
@@ -66,7 +67,7 @@ class SpoolingCarbonClientProtocol(Int32StringReceiver):
       pickles.
       """
       # self.sendString(pickle.dumps(datapoints, protocol=-1))
-      self.queue_file.write(repr(datapoints) + "\n")
+      self.queue_file.write(json.dumps(datapoints) + "\n")
       # XXX Change "sent" to "written"?
       instrumentation.increment(self.factory.sent, len(datapoints))
       instrumentation.increment(self.factory.batchesSent)
@@ -188,17 +189,17 @@ class SpoolingCarbonClientFactory(ReconnectingClientFactory):
       if self.queue_file:
           size = self.queue_file.tell() # should be at the end of the file
           self.queue_file.close()
-          # in case it was deleted by hand, no crying over spilt milk
-          # https://github.com/pcn/carbon/issues/15
           try:
               if size == 0:
                   os.unlink(self.queue_file_name)
               else:
                   os.rename(self.queue_file_name, new_name) # Tidy up
           except IOError:
+              # in case it was deleted by hand, no crying over spilt milk
+              # https://github.com/pcn/carbon/issues/15
               pass
           fname = os.path.basename(self.queue_file_name)
-          new_name = "{0}/{1}".format(self.send_queue_dir, fname)
+          new_name = "{0}/{1}.json".format(self.send_queue_dir, fname)
           log.clients("%s::open_next_queue_file new_name is {0}".format(self, new_name) )
 
       self.queue_file_name = "{0}/{1:.2f}".format(self.send_tmp_dir, self.next_flush_time)
