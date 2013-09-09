@@ -124,7 +124,7 @@ export PATH
 exec 2>&1
 exec chpst -u {0}:{1} -- \
     /opt/graphite/bin/queue-runner.py \
-    repr-lineproto-socket-sender.py \
+    json-lineproto-socket-sender.py \
     {2} \
     {3} \
     {4}/send/{5} \

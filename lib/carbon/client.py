@@ -67,7 +67,7 @@ class SpoolingCarbonClientProtocol(Int32StringReceiver):
       pickles.
       """
       # self.sendString(pickle.dumps(datapoints, protocol=-1))
-      self.queue_file.write(json.dumps(datapoints) + "\n")
+      self.factory.queue_file.write(json.dumps(datapoints) + "\n")
       # XXX Change "sent" to "written"?
       instrumentation.increment(self.factory.sent, len(datapoints))
       instrumentation.increment(self.factory.batchesSent)
@@ -95,10 +95,10 @@ class SpoolingCarbonClientProtocol(Int32StringReceiver):
     if not self.factory.hasQueuedDatapoints():
       return
 
-    self._sendDatapoints(self.factory.takeSomeFromQueue())
-    if time() >= self.next_flush_time:
-        self.set_next_flush_time()
+    if time() >= self.factory.next_flush_time:
+        self.factory.set_next_flush_time()
         self.factory.open_next_queue_file()
+    self._sendDatapoints(self.factory.takeSomeFromQueue())
     if (self.factory.queueFull.called and
         queueSize < SEND_QUEUE_LOW_WATERMARK):
       self.factory.queueHasSpace.callback(queueSize)
@@ -141,11 +141,9 @@ class SpoolingCarbonClientFactory(ReconnectingClientFactory):
     self.queuedUntilConnected = 'destinations.%s.queuedUntilConnected' % self.destinationName
     # XXX create the temp dir if it doesn't already exist
     self.send_tmp_dir = "{0}/temp/{1}:{2}".format(
-        settings.SPOOLING_PATH, self.transport.addr[0],
-        self.transport.addr[1])
+        settings.SPOOLING_PATH, self.host, self.port)
     self.send_queue_dir = "{0}/send/{1}:{2}".format(
-        settings.SPOOLING_PATH, self.transport.addr[0],
-        self.transport.addr[1])
+        settings.SPOOLING_PATH, self.host, self.port)
     self.queue_file_prefix = "{0}/send".format(self.send_queue_dir)
     self.queue_file = None
     self.open_next_queue_file()
@@ -189,6 +187,10 @@ class SpoolingCarbonClientFactory(ReconnectingClientFactory):
       if self.queue_file:
           size = self.queue_file.tell() # should be at the end of the file
           self.queue_file.close()
+          fname = os.path.basename(self.queue_file_name)
+          new_name = "{0}/{1}.json".format(self.send_queue_dir, fname)
+          log.clients("{0}::open_next_queue_file new_name is {1}".format(self, new_name))
+
           try:
               if size == 0:
                   os.unlink(self.queue_file_name)
@@ -198,9 +200,6 @@ class SpoolingCarbonClientFactory(ReconnectingClientFactory):
               # in case it was deleted by hand, no crying over spilt milk
               # https://github.com/pcn/carbon/issues/15
               pass
-          fname = os.path.basename(self.queue_file_name)
-          new_name = "{0}/{1}.json".format(self.send_queue_dir, fname)
-          log.clients("%s::open_next_queue_file new_name is {0}".format(self, new_name) )
 
       self.queue_file_name = "{0}/{1:.2f}".format(self.send_tmp_dir, self.next_flush_time)
       self.queue_file = open(self.queue_file_name, 'w')
@@ -273,18 +272,18 @@ class SpoolingCarbonClientFactory(ReconnectingClientFactory):
     self.queue.appendleft((metric, datapoint))
 
   def sendDatapoint(self, metric, datapoint):
-    instrumentation.increment(self.factory.attemptedRelays)
+    instrumentation.increment(self.attemptedRelays)
     if self.queueSize >= settings.MAX_QUEUE_SIZE:
       if not self.queueFull.called:
         self.queueFull.callback(self.queueSize)
-      instrumentation.increment(self.factory.fullQueueDrops)
+      instrumentation.increment(self.fullQueueDrops)
     else:
       self.enqueue(metric, datapoint)
 
     if self.connectedProtocol:
       reactor.callLater(settings.TIME_TO_DEFER_SENDING, self.connectedProtocol.sendQueued)
     else:
-      instrumentation.increment(self.factory.queuedUntilConnected)
+      instrumentation.increment(self.queuedUntilConnected)
 
   def sendHighPriorityDatapoint(self, metric, datapoint):
     """The high priority datapoint is one relating to the carbon
@@ -297,13 +296,13 @@ class SpoolingCarbonClientFactory(ReconnectingClientFactory):
     capacity has been reached.  This relies on not creating the deque
     with a fixed max size.
     """
-    instrumentation.increment(self.factory.attemptedRelays)
+    instrumentation.increment(self.attemptedRelays)
     self.enqueue_from_left(metric, datapoint)
 
     if self.connectedProtocol:
       reactor.callLater(settings.TIME_TO_DEFER_SENDING, self.connectedProtocol.sendQueued)
     else:
-      instrumentation.increment(self.factory.queuedUntilConnected)
+      instrumentation.increment(self.queuedUntilConnected)
 
   def startedConnecting(self, connector):
     log.clients("%s::startedConnecting (%s:%d)" % (self, connector.host, connector.port))
