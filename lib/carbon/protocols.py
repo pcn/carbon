@@ -53,6 +53,7 @@ class MetricReceiver:
     if WhiteList and metric not in WhiteList:
       instrumentation.increment('whitelistRejects')
       return
+    # XXX Should inifinity be added to the checks below?
     if datapoint[1] == datapoint[1]: # filter out NaN values
       events.metricReceived(metric, datapoint)
 

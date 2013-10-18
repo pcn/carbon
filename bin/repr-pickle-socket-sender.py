@@ -14,14 +14,15 @@ XXX it would be useful to gracefully handle signals, e.g. being able
 to get a TERM, and so return stats at the time of the TERM.  Currently
 if we take too long, we'll just get killed by the queue-runner
 
+This is simpler than nc https://github.com/pcn/carbon/issues/16.
 """
 
 import os
 import sys
 import struct
 import cPickle as pickle
-import subprocess
 import time
+import socket
 
 fname = sys.argv[3]
 f = open(fname)
@@ -37,9 +38,16 @@ if size == 0:
     os.unlink(fname)
     sys.exit(1) # 1 will mean no data
 
-sub_p = subprocess.Popen(['nc', sys.argv[1], sys.argv[2]],
-                         stdin=subprocess.PIPE)
 # print("DEBUG: Sending {0} bytes with {1}".format(size, sys.argv))
+timeout      = 10
+try:
+    conn = socket.create_connection((sys.argv[1], sys.argv[2],), timeout)
+except Exception as e:
+    print "ERROR: Trying to connect to the remote: {0}:{1}".format(sys.argv[1], sys.argv[2])
+    print "ERROR: message is {0}".format(str(e))
+    print "ERROR: exiting."
+    sys.exit(100)
+
 start_time   = time.time()
 metric_count = 0
 errored      = False
@@ -57,16 +65,16 @@ for line in f:
         errored = True
         continue
     try:
-        sub_p.stdin.write(struct.pack(struct_format, len(p)) + p)
-    except IOError as ioe:
+        conn.sendall(struct.pack(struct_format, len(p)) + p)
+    except Exception as another_error:
         print "ERROR: IOError trying to send {0}: {1}".format(fname, l)
-        print "ERROR: the message is: {0}".format(str(ioe))
-        break # No child, get out of here
+        print "ERROR: the message is: {0}".format(str(another_error))
+        print "ERROR: exiting."
+        sys.exit(100)
 
-sub_p.terminate()
-end_time = time.time()
-time_taken = end_time - start_time
-bytes_per_second = float(size) / float(time_taken)
+end_time           = time.time()
+time_taken         = end_time - start_time
+bytes_per_second   = float(size) / float(time_taken)
 metrics_per_second = float(metric_count) / float(time_taken)
 
 # if called from the command line, this may fail.  If called from

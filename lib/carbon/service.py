@@ -179,8 +179,6 @@ def createRelayService(config):
     # Configure application components
     if settings.RELAY_METHOD == 'rules':
       router = RelayRulesRouter(settings["relay-rules"])
-    if settings.RELAY_METHOD == 'spooling-rules':
-      router = SpoolingRelayRulesRouter(settings["spooling-relay-rules"])
     elif settings.RELAY_METHOD == 'consistent-hashing':
       router = ConsistentHashingRouter(settings.REPLICATION_FACTOR)
     elif settings.RELAY_METHOD == 'aggregated-consistent-hashing':

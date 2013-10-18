@@ -1,13 +1,14 @@
 #!/usr/bin/env python
 
 usage = """Makes the directory+files necessary for a particular
-remote for the spooling relay to be setup.
+remote for the spooling relay to be setup.  The spooler will
+send to the line protocol port of a remote cache or relay.
 
 Performs setup with runit.
 
 Needs:
 remote_host - the host this will send to
-remote_port - the port this will connect to
+remote_port - the [line protocol] port this will connect
 spool_path  - the directory that will contain the send and temp queues
 runit_dir   - The directory that runit will create files in
 log_dir     - the directory where a log directory will be created for runit
@@ -18,9 +19,9 @@ timeout     - the timeout before a sending process should be killed
 
 Example:
 
-sudo setup_runit_spooling_sender.py \
+sudo setup-runit-spooling-sender.py \
     ec2-54-235-34-178.compute-1.amazonaws.com \
-    2004 \
+    2003 \
     /var/spool/carbon \
     /etc/sv \
     /var/log \
@@ -40,7 +41,7 @@ Output:
 /etc/sv/carbon-sender-ec2-54-235-34-178.compute-1.amazonaws.com:2004/run created and set executable
 /etc/sv/carbon-sender-ec2-54-235-34-178.compute-1.amazonaws.com:2004/log/run created and set executable
 
-To start this service, symlink /etc/sv/carbon-sender-ec2-54-235-34-178.compute-1.amazonaws.com:2004 into /etc/service (on debian/ubuntu)
+To start this service, symlink /etc/sv/carbon-sender-ec2-54-235-34-178.compute-1.amazonaws.com:2003 into /etc/service (on debian/ubuntu)
 
 """
 
@@ -113,11 +114,17 @@ def main(argv=sys.argv[:]):
     make_spool_dirs(spool_path, hostandport, owner)
     make_log_dir(log_dir, hostandport, "root")
     runit_run = """#!/bin/sh
-. /opt/graphite/bin/activate
+if [ -f /opt/graphite/bin/activate ] ; then
+    . /opt/graphite/bin/activate
+fi
+
+PATH=/opt/graphite/bin:$PATH
+export PATH
+
 exec 2>&1
 exec chpst -u {0}:{1} -- \
     /opt/graphite/bin/queue-runner.py \
-    repr-pickle-sender.py \
+    json-lineproto-socket-sender.py \
     {2} \
     {3} \
     {4}/send/{5} \

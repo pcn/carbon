@@ -77,11 +77,11 @@ def do_fork(command, dst_host, dst_port, filename, write_pipe):
 
 def log_and_kill_overtime_processes(children, timeout):
     now = time.time()
-    for child in children.items():
-        if child[1][1] + timeout < now:
-            os.kill(child[0], signal.SIGKILL)
+    for pid, child_val in children.items():
+        if child_val[1] + timeout < now:
+            os.kill(pid, signal.SIGKILL)
             sys.stdout.write("Killed pid {0} (sending {1}): timeout of {2}, was {3} seconds old\n".format(
-                child[0], child[1][0], timeout, now - child[1][1]))
+                pid, child_val[0], timeout, now - child_val[1]))
 
 def get_sorted_queue(queue_dir):
     """Return a sorted list of the queue files"""
@@ -121,7 +121,7 @@ parallelism_below_limit.prior_items = 0
 def pickup_something_from_the_queue(queue_dir, children, cmd_sans_file):
     """Runs on the first file to be found in the queue dir"""
     for fname in sorted(os.listdir(queue_dir)):
-        if fname not in [i[1][0] for i in children.items()]:
+        if fname not in [i[0] for i in children.values()]:
             # we're not working on this already, take it
             do_fork_args = cmd_sans_file[:]
             do_fork_args.append("{0}/{1}".format(queue_dir, fname))
@@ -138,9 +138,8 @@ def check_and_run_queue(queue_dir, children, parallelism, cmd_sans_file):
     conditions are OK for a spool file to be run.  If conditions
     are auspicious, then it shall be done.
     """
+    check_children_status(children)
     if check_dir_contents(queue_dir, children) is False:
-        return False
-    if check_children_status(children) is False:
         return False
     if parallelism_below_limit(children, parallelism) is False:
         return False
@@ -159,7 +158,9 @@ def run_the_queue(queue_dir, children, parallelism, cmd_sans_file):
 
 # XXX have this called from a signal handler, maybe?
 def reap_done_child(children, timeout):
-    """Each invocation of this will reap a child."""
+    """Each invocation of this will reap a child.  It will also invoke
+    log_and_kill_overtime_processes() so, it may well create more work
+    for itself, and cause itself to get invoked again"""
     if len(children) < 1:
         return None
     log_and_kill_overtime_processes(children, timeout)
@@ -171,7 +172,6 @@ def reap_done_child(children, timeout):
         # sys.stdout.write("DEBUG: pid: {0}, status: {1}, usage: {2}\n".format(pid, status, usage))
         # sys.stdout.flush()
         if status != 0: # XXX instead of kill, we could use term first and try to get instrumentation from the dead process.
-            # XXX Log the failure
             sys.stdout.write("Pid: {0} failed with an exit code of {1}\n".format(pid, status))
             sys.stdout.flush()
 
