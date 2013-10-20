@@ -171,3 +171,13 @@ to not confuse people as to what is going on.
 I think this is not entirely orthogonal to what @dieterbe is working
 on, but I do hope that if this works well enough that it can be rolled
 back into graphite to make the common use cases faster, better, etc.
+
+This puts an interesting constraint on the integration with KairosDB,
+where to cache effectively the data queries to it should start and end
+on minute boundaries as defined by 60 second intervals based on UTC.
+I'm not sure how leap seconds would impact this, but it would make the
+results cachable, while a naive query of "now to two hours ago" should
+cause a proper time series database to produce results that are
+different in 2 different minutes.  Specifying an arbitrary baseline
+like the zero-th second of a minute makes even queries for data on
+10-second boundaries cachable.
