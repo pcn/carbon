@@ -93,7 +93,8 @@ Here's a thought on how I think we can fix that:
    use as a cache it'll just write to disk and minimize its processing
    and memory needs (that is, it'll queue until all metrics are
    flushed to disk, but never provide and support a query interface).
-   The goal of the writer is to get to stable storage ASAP.
+   The goal of the writer is to get to stable storage ASAP.  In
+   addition, the writer should be able to delete metrics.
 
 2) Queries for metrics need to be provided from a carbon-reader
    service.  This will connect to any configured backend and read data
@@ -154,6 +155,13 @@ Here's a thought on how I think we can fix that:
    implementations are left up to the particular business that is
    using it.  The important thing is that a well-behaved
    implementation is provided that can be used out of the box.
+
+7) While I'm at it, there should be a carbon-metric-manager.  That
+   would provide a small and probably growing set of features.  The
+   main things I can see being hugely desireable for graphite are:
+   deleting metrics and copying datapoints (e.g. from one node in a
+   consistent-hashing system to another, or just from one hierarchy to
+   another).
 
 I intend to start experimenting with this soon. It seems that this is
 going to be a very disruptive change, so I think it'll be necessary
