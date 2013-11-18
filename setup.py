@@ -40,6 +40,7 @@ setup(
   scripts=glob('bin/*'),
   package_data={ 'carbon' : ['*.xml'] },
   data_files=install_files,
+#   install_requires=['twisted', 'txamqp', 'pyKairosDB'],
   install_requires=['twisted', 'txamqp'],
   **setup_kwargs
 )
